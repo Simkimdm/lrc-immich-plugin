@@ -26,23 +26,30 @@ Enable the following scopes:
 
 | Scope | Required for |
 |-------|-------------|
-| `asset.read` | All workflows |
-| `asset.upload` | Export, Publish |
-| `asset.replace` | Export, Publish |
-| `asset.delete` | Publish (deletion sync) |
-| `asset.download` | Import |
-| `asset.update` | Export, Publish |
-| `asset.copy` | Export, Publish |
-| `album.read` | Album modes, Import |
+| `asset.read` | All workflows (asset metadata, `GET /assets/:id`, `/search/metadata`) |
+| `asset.view` | Thumbnails/previews (`GET /assets/:id/thumbnail`) — Sync "Thumbnails first", Import previews |
+| `asset.upload` | Export, Publish, Sync upload (`POST /assets`) |
+| `asset.replace` | Export, Publish (`PUT /assets/:id` with file) |
+| `asset.delete` | Publish + Sync deletion sync (`DELETE /assets/:id`, `/assets/jobs`) |
+| `asset.download` | Import, Sync download, "Download original from Immich" (`GET /assets/:id/original`) |
+| `asset.update` | Export, Publish, Sync metadata push (`PUT /assets/:id`) |
+| `asset.copy` | Export, Publish (`POST /assets/copy`) |
+| `album.read` | Album modes, Import (`GET /albums`, `/albums/:id`) |
 | `album.create` | Album modes (new, folder) |
-| `album.update` | Album modes |
+| `album.update` | Album modes (rename etc.) |
 | `album.delete` | Publish (album cleanup) |
 | `albumAsset.create` | Adding photos to albums |
 | `albumAsset.delete` | Removing photos from albums |
-| `stack.create` | Original file stacking |
-| `stack.read` | Sync: stack-aware downloads (RAW/primary per stack) |
-| `user.read` | Connection test |
+| `stack.create` | Original file stacking (Export, Publish, Sync) |
+| `stack.read` | Sync: stack-aware downloads (`GET /stacks`) — without it the sync falls back to per-asset downloads and logs a 403 |
+| `search.smart` | "Find in Lightroom (Immich Search)" (`POST /search/smart`) |
+| `share.create` | "Create Immich share link" (`POST /shared-links`) |
+| `tag.create` | Sync metadata push: keywords → tags (`PUT /tags`) |
+| `tag.asset` | Sync metadata push: assign tags to assets (`PUT /tags/assets`) |
+| `user.read` | Connection test (`GET /users/me`, `/users`) |
 | `activity.read` | General API access |
+
+> **Shortcut:** if your Immich version offers **"All permissions"** for the key, that also works — the table above is the least-privilege set. If a call fails with `403 Missing required permission: <scope>`, add exactly that scope to the key.
 
 Using a dedicated key (rather than your main account key) limits blast radius if the key is ever exposed.
 
