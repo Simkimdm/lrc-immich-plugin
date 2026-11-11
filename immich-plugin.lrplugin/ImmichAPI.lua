@@ -886,7 +886,7 @@ end
 local RAW_EXTENSIONS = {
     dng = true, nef = true, nrw = true, cr2 = true, cr3 = true, arw = true, orf = true,
     rw2 = true, raf = true, pef = true, srw = true, x3f = true, erf = true, mef = true,
-    mos = true, 3fr = true,
+    mos = true, ["3fr"] = true,
 }
 
 -- List all stacks once and cache them on the instance. Each entry is normalized to
