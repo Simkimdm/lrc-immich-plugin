@@ -39,6 +39,11 @@ return {
             title = "Sync with Immich",
             file = "SyncDialog.lua",
         },
+        {
+            title = "Download original from Immich",
+            file = "DownloadOriginalTask.lua",
+            enabledWhen = "photosSelected",
+        },
     },
 
     LrExportMenuItems = {
@@ -57,6 +62,11 @@ return {
         {
             title = "Sync with Immich",
             file = "SyncDialog.lua",
+        },
+        {
+            title = "Download original from Immich",
+            file = "DownloadOriginalTask.lua",
+            enabledWhen = "photosSelected",
         },
     },
 

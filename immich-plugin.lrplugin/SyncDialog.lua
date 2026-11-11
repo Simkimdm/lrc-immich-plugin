@@ -31,6 +31,12 @@ return {
         if prefs.syncPreview == nil then
             prefs.syncPreview = true
         end
+        if prefs.syncStackHandling == nil then
+            prefs.syncStackHandling = "primary"
+        end
+        if prefs.syncThumbnailPreview == nil then
+            prefs.syncThumbnailPreview = false
+        end
 
         local f = LrView.osFactory()
         local share = LrView.share
@@ -110,6 +116,25 @@ return {
             f:separator({ fill_horizontal = 1 }),
             f:row({
                 f:static_text({ title = "Download:", alignment = "right", width = share("sync_label") }),
+                f:popup_menu({
+                    value = bind("syncStackHandling"),
+                    items = {
+                        { title = "Stack primary (as shown in Immich)", value = "primary" },
+                        { title = "RAW file from the stack (if present)", value = "raw" },
+                        { title = "All stack members", value = "all" },
+                    },
+                    width = 260,
+                }),
+            }),
+            f:row({
+                f:static_text({ title = "", width = share("sync_label") }),
+                f:checkbox({
+                    title = "Thumbnails first (preview import); originals on demand via menu",
+                    value = bind("syncThumbnailPreview"),
+                }),
+            }),
+            f:row({
+                f:static_text({ title = "", width = share("sync_label") }),
                 f:checkbox({
                     title = "Force LrHttp transport (disable curl streaming)",
                     value = bind("syncForceLrHttp"),
@@ -142,6 +167,8 @@ return {
                 rejectInLr = prefs.syncRejectInLr,
                 forceLrHttp = prefs.syncForceLrHttp,
                 preview = prefs.syncPreview,
+                stackHandling = prefs.syncStackHandling,
+                thumbnailPreview = prefs.syncThumbnailPreview,
             })
         end
     end),

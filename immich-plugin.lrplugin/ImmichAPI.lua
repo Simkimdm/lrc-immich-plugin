@@ -160,53 +160,76 @@ local function curlAvailable()
     return curlPresent
 end
 
--- Download an asset's original bytes straight to destPath. Prefers streaming via the system
--- curl binary (constant memory) over LrHttp.get, which loads the whole asset into a Lua
--- string. Falls back to LrHttp.get when curl is absent or forceLrHttp is set. Returns true
--- on success, false otherwise.
-function ImmichAPI:downloadAssetToFile(assetId, destPath, forceLrHttp)
-    if Util.nilOrEmpty(assetId) or Util.nilOrEmpty(destPath) then
-        log:warn("downloadAssetToFile: assetId or destPath empty")
-        return false
-    end
-
-    local assetUrl = string.format("%s%s/assets/%s/original", self.url, self.apiBasePath, assetId)
-
+-- Stream url straight to destPath. Prefers the system curl binary (constant memory) over
+-- LrHttp.get, which loads the whole body into a Lua string. Falls back to lrHttpFallback()
+-- (a function returning the body or nil) when curl is absent or forceLrHttp is set.
+-- Returns true on success, false otherwise.
+local function streamUrlToFile(self, url, destPath, forceLrHttp, lrHttpFallback, label)
     if not forceLrHttp and curlAvailable() then
         -- -f fail on HTTP errors, -s silent, -S still show errors, -L follow redirects.
         local cmd = table.concat({
             "curl -f -s -S -L",
             "-H " .. Util.shellQuote("x-api-key: " .. (type(self.apiKey) == "string" and self.apiKey or "")),
             "-o " .. Util.shellQuote(destPath),
-            Util.shellQuote(assetUrl),
+            Util.shellQuote(url),
         }, " ")
         local rc = -1
         local ok = LrTasks.pcall(function()
             rc = LrTasks.execute(cmd)
         end)
         if ok and rc == 0 and LrFileUtils.exists(destPath) then
-            log:trace("downloadAssetToFile: curl downloaded " .. assetId .. " -> " .. destPath)
+            log:trace(label .. ": curl downloaded " .. url .. " -> " .. destPath)
             return true
         end
-        log:warn(
-            "downloadAssetToFile: curl failed (rc=" .. tostring(rc) .. ") for " .. assetId .. "; falling back to LrHttp"
-        )
+        log:warn(label .. ": curl failed (rc=" .. tostring(rc) .. "); falling back to LrHttp")
     end
 
-    -- Fallback: in-memory download, then write to disk.
-    local body = self:downloadAsset(assetId)
+    local body = lrHttpFallback and lrHttpFallback()
     if body == nil then
         return false
     end
     local file = io.open(destPath, "wb")
     if not file then
-        log:error("downloadAssetToFile: cannot open " .. destPath .. " for writing")
+        log:error(label .. ": cannot open " .. destPath .. " for writing")
         return false
     end
     file:write(body)
     file:close()
     body = nil -- luacheck: ignore 311
     return true
+end
+
+-- Download an asset's original bytes straight to destPath. Returns true on success.
+function ImmichAPI:downloadAssetToFile(assetId, destPath, forceLrHttp)
+    if Util.nilOrEmpty(assetId) or Util.nilOrEmpty(destPath) then
+        log:warn("downloadAssetToFile: assetId or destPath empty")
+        return false
+    end
+    local assetUrl = string.format("%s%s/assets/%s/original", self.url, self.apiBasePath, assetId)
+    return streamUrlToFile(self, assetUrl, destPath, forceLrHttp, function()
+        return self:downloadAsset(assetId)
+    end, "downloadAssetToFile")
+end
+
+-- Download an asset's rendered thumbnail (always JPEG) straight to destPath.
+-- size is "thumbnail" (small) or "preview" (larger, default). Returns true on success.
+function ImmichAPI:downloadThumbnailToFile(assetId, destPath, size, forceLrHttp)
+    if Util.nilOrEmpty(assetId) or Util.nilOrEmpty(destPath) then
+        log:warn("downloadThumbnailToFile: assetId or destPath empty")
+        return false
+    end
+    size = (size == "thumbnail") and "thumbnail" or "preview"
+    local thumbUrl = string.format("%s%s/assets/%s/thumbnail?size=%s", self.url, self.apiBasePath, assetId, size)
+    return streamUrlToFile(self, thumbUrl, destPath, forceLrHttp, function()
+        local response, headers = LrHttp.get(thumbUrl, self:createHeaders())
+        if headers and headers.status == 200 then
+            return response
+        end
+        log:error(
+            "downloadThumbnailToFile: LrHttp failed for asset " .. assetId .. " (status " .. tostring(headers and headers.status) .. ")"
+        )
+        return nil
+    end, "downloadThumbnailToFile")
 end
 
 function ImmichAPI:hasLivePhotoVideo(assetId)
@@ -857,6 +880,74 @@ function ImmichAPI:createStack(assetIds)
         log:error("Failed to create stack")
         return nil
     end
+end
+
+-- Raw camera extensions (lowercase, without dot) used to pick the RAW member of a stack.
+local RAW_EXTENSIONS = {
+    dng = true, nef = true, nrw = true, cr2 = true, cr3 = true, arw = true, orf = true,
+    rw2 = true, raf = true, pef = true, srw = true, x3f = true, erf = true, mef = true,
+    mos = true, 3fr = true,
+}
+
+-- List all stacks once and cache them on the instance. Each entry is normalized to
+-- { id, primaryAssetId, members = { { id, originalFileName } } }. Returns nil on failure.
+function ImmichAPI:getStacks()
+    if self._stacksCache then
+        return self._stacksCache
+    end
+    local response = self:doGetRequest("/stacks")
+    local raw = response
+    if type(raw) == "table" and not raw[1] and type(raw.stacks) == "table" then
+        raw = raw.stacks
+    end
+    if type(raw) ~= "table" then
+        log:error("getStacks: /stacks failed or unexpected response")
+        return nil
+    end
+    local stacks = {}
+    for _, st in ipairs(raw) do
+        local members = {}
+        for _, m in ipairs(st.assets or {}) do
+            table.insert(members, { id = m.id, originalFileName = m.originalFileName })
+        end
+        table.insert(stacks, { id = st.id, primaryAssetId = st.primaryAssetId, members = members })
+    end
+    self._stacksCache = stacks
+    return stacks
+end
+
+-- Resolve which asset of a stack should be downloaded for assetId. mode is "primary"
+-- (the stack's primary asset, as shown in Immich), "raw" (the RAW member if any, else the
+-- primary), or "all"/nil (the asset itself). Returns assetId unchanged when the asset is
+-- not part of a stack or stacks cannot be listed.
+function ImmichAPI:resolveStackAssetId(assetId, mode)
+    if Util.nilOrEmpty(assetId) or mode == "all" then
+        return assetId
+    end
+    local stacks = self:getStacks()
+    if not stacks then
+        return assetId
+    end
+    for _, st in ipairs(stacks) do
+        local inStack = false
+        for _, m in ipairs(st.members) do
+            if m.id == assetId then
+                inStack = true
+                break
+            end
+        end
+        if inStack then
+            if mode == "raw" then
+                for _, m in ipairs(st.members) do
+                    if RAW_EXTENSIONS[Util.getExtension(m.originalFileName or "")] then
+                        return m.id
+                    end
+                end
+            end
+            return st.primaryAssetId or assetId
+        end
+    end
+    return assetId
 end
 
 -- ---------------------------------------------------------------------------

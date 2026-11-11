@@ -185,16 +185,25 @@ local function uploadPhoto(immich, photo, opts, failures)
 end
 
 -- Phase A analysis: which Immich assets are missing from the catalog and would be downloaded.
--- Returns the asset list, or nil + an error message on failure.
-local function analyzeDownload(immich, catalog)
+-- Stack handling (opts.stackHandling: "primary" | "raw" | "all") collapses each stack to a
+-- single representative asset via ImmichAPI:resolveStackAssetId. Returns the asset list, or
+-- nil + an error message on failure.
+local function analyzeDownload(immich, catalog, opts)
     local assets = immich:getAllAssets()
     if not assets then
         return nil, "Failed to list Immich assets. Check logs."
     end
     local existing = collectExistingAssetIds(catalog)
-    local toDownload = {}
+    local stackHandling = (opts and opts.stackHandling) or "all"
+    local toDownload, seen = {}, {}
     for _, asset in ipairs(assets) do
-        if not existing[asset.id] then
+        local rep = immich:resolveStackAssetId(asset.id, stackHandling)
+        if rep ~= asset.id then
+            -- Non-representative stack member; the representative is handled on its own entry.
+        elseif existing[rep] or seen[rep] then
+            -- Already in the catalog, or duplicate representative.
+        else
+            seen[rep] = true
             table.insert(toDownload, asset)
         end
     end
@@ -266,7 +275,7 @@ function SyncTask.analyze(opts, catalog, immich, progress)
 
     if doDownload and not progress:isCanceled() then
         progress:setCaption("Fetching Immich asset list...")
-        local toDownload, err = analyzeDownload(immich, catalog)
+        local toDownload, err = analyzeDownload(immich, catalog, opts)
         if not toDownload then
             return nil, err
         end
@@ -359,7 +368,8 @@ local function buildPreviewText(opts, plan)
         for _, asset in ipairs(plan.download) do
             table.insert(lines, string.format("%s  [id %s]", asset.originalFileName or "?", asset.id))
         end
-        table.insert(sections, { heading = "Download to Lightroom", lines = lines })
+        local heading = opts.thumbnailPreview and "Download thumbnail previews to Lightroom" or "Download to Lightroom"
+        table.insert(sections, { heading = heading, lines = lines })
     end
 
     if doUpload then
@@ -493,7 +503,10 @@ function SyncTask.execute(opts, plan, catalog, immich, progress, failures)
         if not LrFileUtils.exists(importDir) then
             LrFileUtils.createDirectory(importDir)
         end
-        local folder = LrPathUtils.child(importDir, SYNC_SUBFOLDER)
+        -- Thumbnail-preview mode imports small JPEGs first; originals are fetched on demand
+        -- via the "Download original from Immich" menu action.
+        local previewMode = opts.thumbnailPreview == true
+        local folder = LrPathUtils.child(importDir, previewMode and "Immich Sync Preview" or SYNC_SUBFOLDER)
         if not LrFileUtils.exists(folder) then
             LrFileUtils.createDirectory(folder)
         end
@@ -504,8 +517,18 @@ function SyncTask.execute(opts, plan, catalog, immich, progress, failures)
             if progress:isCanceled() then
                 break
             end
-            local dest = LrPathUtils.child(folder, asset.originalFileName or (asset.id .. ".bin"))
-            if immich:downloadAssetToFile(asset.id, dest, opts.forceLrHttp) then
+            local dest
+            if previewMode then
+                -- Thumbnails are always JPEG, so swap the extension for .jpg.
+                local base = (asset.originalFileName or (asset.id .. ".jpg")):gsub("%.[^%.]+$", "")
+                dest = LrPathUtils.child(folder, base .. ".jpg")
+            else
+                dest = LrPathUtils.child(folder, asset.originalFileName or (asset.id .. ".bin"))
+            end
+            local downloaded = previewMode
+                    and immich:downloadThumbnailToFile(asset.id, dest, "preview", opts.forceLrHttp)
+                or immich:downloadAssetToFile(asset.id, dest, opts.forceLrHttp)
+            if downloaded then
                 pathToId[dest] = asset.id
                 stats.downloaded = stats.downloaded + 1
                 table.insert(report.downloaded, {
@@ -617,7 +640,8 @@ local function buildCompletionText(opts, stats, report, failures)
     for _, item in ipairs(report.downloaded) do
         table.insert(downloadLines, string.format("%s  [id %s]  -> %s", item.filename, item.assetId, item.path))
     end
-    table.insert(sections, { heading = "Downloaded to Lightroom", lines = downloadLines })
+    local heading = opts.thumbnailPreview and "Downloaded thumbnail previews to Lightroom" or "Downloaded to Lightroom"
+    table.insert(sections, { heading = heading, lines = downloadLines })
 
     local uploadLines = {}
     for _, item in ipairs(report.uploaded) do
