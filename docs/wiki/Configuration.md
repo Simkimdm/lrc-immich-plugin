@@ -40,6 +40,7 @@ Enable the following scopes:
 | `albumAsset.create` | Adding photos to albums |
 | `albumAsset.delete` | Removing photos from albums |
 | `stack.create` | Original file stacking |
+| `stack.read` | Sync: stack-aware downloads (RAW/primary per stack) |
 | `user.read` | Connection test |
 | `activity.read` | General API access |
 

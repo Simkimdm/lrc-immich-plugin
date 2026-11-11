@@ -901,7 +901,11 @@ function ImmichAPI:getStacks()
         raw = raw.stacks
     end
     if type(raw) ~= "table" then
-        log:error("getStacks: /stacks failed or unexpected response")
+        -- Cache the failure as "no stacks": otherwise resolveStackAssetId would re-request
+        -- /stacks for every single asset (e.g. a 403 "Missing required permission:
+        -- stack.read"), stalling the sync analysis with one request per asset.
+        log:error("getStacks: /stacks failed (check the 'stack.read' API key permission); falling back to per-asset downloads")
+        self._stacksCache = {}
         return nil
     end
     local stacks = {}
