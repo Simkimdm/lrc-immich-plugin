@@ -38,7 +38,7 @@ return {
 
         local progress = LrProgressScope({ title = "Downloading originals from Immich...", caption = "Starting..." })
         local total = #photos
-        local downloaded, skippedNoId, skippedExists, failed = 0, 0, 0, 0
+        local downloaded, stacked, skippedNoId, skippedExists, failed = 0, 0, 0, 0, 0
         local failures = {}
 
         for i, photo in ipairs(photos) do
@@ -63,6 +63,18 @@ return {
                         skippedExists = skippedExists + 1
                     elseif immich:downloadAssetToFile(repId, dest, false) then
                         downloaded = downloaded + 1
+                        -- Import the original stacked above the preview photo, so the RAW
+                        -- is on top of the stack and "edit" opens the full-size file.
+                        local ok, err = LrTasks.pcall(function()
+                            catalog:withWriteAccessDo("Immich: stack original", function()
+                                catalog:addPhoto(dest, photo, "above")
+                            end, { timeout = 30 })
+                        end)
+                        if ok then
+                            stacked = stacked + 1
+                        else
+                            log:warn("DownloadOriginalTask: stacking failed for " .. filename .. ": " .. tostring(err))
+                        end
                     else
                         failed = failed + 1
                         table.insert(failures, filename .. " (download failed)")
@@ -76,17 +88,11 @@ return {
 
         local lines = {
             string.format("Downloaded: %d", downloaded),
+            string.format("Stacked above preview: %d", stacked),
             string.format("Already present: %d", skippedExists),
             string.format("No Immich ID: %d", skippedNoId),
             string.format("Failed: %d", failed),
         }
-        if downloaded > 0 then
-            table.insert(
-                lines,
-                "\nTip: select the preview photo and the downloaded original together,\n"
-                    .. "then Photo > Stacking > Stack, so the RAW sits on top before editing."
-            )
-        end
         LrDialogs.message(
             "Immich original download finished",
             table.concat(lines, "\n") .. (#failures > 0 and ("\n\n" .. table.concat(failures, "\n")) or ""),
