@@ -80,6 +80,13 @@ return {
             string.format("No Immich ID: %d", skippedNoId),
             string.format("Failed: %d", failed),
         }
+        if downloaded > 0 then
+            table.insert(
+                lines,
+                "\nTip: select the preview photo and the downloaded original together,\n"
+                    .. "then Photo > Stacking > Stack, so the RAW sits on top before editing."
+            )
+        end
         LrDialogs.message(
             "Immich original download finished",
             table.concat(lines, "\n") .. (#failures > 0 and ("\n\n" .. table.concat(failures, "\n")) or ""),
